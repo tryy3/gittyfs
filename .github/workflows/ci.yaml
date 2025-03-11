@@ -34,7 +34,7 @@ jobs:
 
       - name: Build arm64
         if: matrix.platform == 'linux/arm64'
-        run: CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o gittyfs-arm64 cmd/main.go
+        run: CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -a -ldflags '-extldflags "-static"' -o gittyfs-arm64 cmd/main.go
 
       - name: Upload Artifact
         if: matrix.platform == 'linux/amd64'

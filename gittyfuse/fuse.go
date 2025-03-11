@@ -115,12 +115,6 @@ func (self *Filesystem) Mount(path string) {
 
 		MountOptions: fuse.MountOptions{
 			Debug: true,
-			// Allow other users to access the filesystem (optional)
-			// AllowOther: true,
-			// You might also want these depending on your needs
-			// DefaultPermissions: true,
-			// Allow programs that use file locking to work properly
-			// FsName: "gittyfs",
 		},
 	})
 

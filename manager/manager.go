@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
@@ -18,18 +19,19 @@ type ChangeNotification struct {
 }
 
 type Manager struct {
-	mu         sync.Mutex
-	repository *git.Repository
-
+	mu             sync.Mutex
+	repository     *git.Repository
+	authFile       string
 	changes        chan ChangeNotification
 	isDirty        bool
 	lastChangeTime time.Time
 	syncInterval   time.Duration
 }
 
-func NewManager(repository *git.Repository) *Manager {
+func NewManager(repository *git.Repository, authFile string) *Manager {
 	return &Manager{
 		repository:   repository,
+		authFile:     authFile,
 		changes:      make(chan ChangeNotification, 100), // Buffer size of 100
 		isDirty:      false,
 		syncInterval: 2 * time.Second, // Default 5 second interval
@@ -85,9 +87,17 @@ func (m *Manager) SyncToGit() error {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	authMethod, err := ssh.NewSSHAgentAuth("git")
-	if err != nil {
-		return fmt.Errorf("ssh agent auth: %w", err)
+	var authMethod transport.AuthMethod
+	if m.authFile != "" {
+		authMethod, err = ssh.NewPublicKeysFromFile("git", m.authFile, "")
+		if err != nil {
+			log.Fatalf("new public keys from file %s: %s", m.authFile, err)
+		}
+	} else {
+		authMethod, err = ssh.NewSSHAgentAuth("git")
+		if err != nil {
+			log.Fatalf("new ssh agent auth %s: %s", "git", err)
+		}
 	}
 
 	err = m.repository.Push(&git.PushOptions{

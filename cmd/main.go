@@ -11,19 +11,32 @@ import (
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/hash"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/tryy3/gittyfs/gittyfuse"
 	"github.com/tryy3/gittyfs/manager"
 )
 
-func createRepository(url string) (*git.Repository, error) {
+func createRepository(url string, authFile string) (*git.Repository, error) {
 	hash.RegisterHash(crypto.SHA1, sha1.New)
 	// trace.SetTarget(trace.Packet)
-
-	authMethod, err := ssh.NewSSHAgentAuth("git")
+	ep, err := transport.NewEndpoint(url)
 	if err != nil {
-		log.Fatalf("ssh agent auth %s: %s", url, err)
+		log.Fatalf("new endpoint %s: %s", url, err)
+	}
+
+	var authMethod transport.AuthMethod
+	if authFile != "" {
+		authMethod, err = ssh.NewPublicKeysFromFile(ep.User, authFile, "")
+		if err != nil {
+			log.Fatalf("new public keys from file %s: %s", authFile, err)
+		}
+	} else {
+		authMethod, err = ssh.NewSSHAgentAuth(ep.User)
+		if err != nil {
+			log.Fatalf("new ssh agent auth %s: %s", ep.User, err)
+		}
 	}
 
 	wt := memfs.New()
@@ -53,10 +66,12 @@ func main() {
 	var gitURL string
 	var UID string
 	var GID string
+	var authFile string
 
 	flag.StringVar(&gitURL, "git", "", "git url")
 	flag.StringVar(&UID, "uid", "", "uid")
 	flag.StringVar(&GID, "gid", "", "gid")
+	flag.StringVar(&authFile, "auth", "", "auth file")
 	flag.Parse()
 
 	flag.Usage = func() {
@@ -83,16 +98,14 @@ func main() {
 	mountPath := args[0]
 
 	// Clone the given repository to the given directory
-
-	// Clone the given repository to the given directory
 	log.Printf("git clone %s", gitURL)
 
-	repo, err := createRepository(gitURL)
+	repo, err := createRepository(gitURL, authFile)
 	if err != nil {
 		log.Fatalf("git clone %s: %s", gitURL, err)
 	}
 
-	manager := manager.NewManager(repo)
+	manager := manager.NewManager(repo, authFile)
 	go manager.Run()
 
 	wt, err := repo.Worktree()

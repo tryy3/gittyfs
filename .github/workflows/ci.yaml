@@ -11,7 +11,6 @@ jobs:
     strategy:
       matrix:
         platform:
-          - linux/amd64
           - linux/arm64
 
     steps:
@@ -26,7 +25,8 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse-dev libfuse3-dev gcc
+          sudo apt-get install -y fuse-dev gcc libc-dev
+          sudo apt-get install -y musl-dev musl-tools
 
       - name: Build amd64
         if: matrix.platform == 'linux/amd64'
@@ -34,7 +34,7 @@ jobs:
 
       - name: Build arm64
         if: matrix.platform == 'linux/arm64'
-        run: CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -a -ldflags '-extldflags "-static"' -o gittyfs-arm64 cmd/main.go
+        run: CGO_ENABLED=1 CC=musl-gcc GOOS=linux GOARCH=arm64 go build -o gittyfs-arm64 cmd/main.go
 
       - name: Upload Artifact
         if: matrix.platform == 'linux/amd64'

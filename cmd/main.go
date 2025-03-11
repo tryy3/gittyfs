@@ -3,7 +3,10 @@ package main
 import (
 	"crypto"
 	"crypto/sha1"
+	"flag"
+	"fmt"
 	"log"
+	"os"
 
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
@@ -41,15 +44,52 @@ func createRepository(url string) (*git.Repository, error) {
 	return r, nil
 }
 
+// Mount path
+// UID
+// GID
+// GIT
+
 func main() {
-	url := "git@github.com:tryy3/test-project.git"
+	var gitURL string
+	var UID string
+	var GID string
+
+	flag.StringVar(&gitURL, "git", "", "git url")
+	flag.StringVar(&UID, "uid", "", "uid")
+	flag.StringVar(&GID, "gid", "", "gid")
+	flag.Parse()
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <mount_path>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		flag.PrintDefaults()
+	}
+
+	// Parse flags
+	flag.Parse()
+
+	// Get positional arguments (after the flags)
+	args := flag.Args()
+	if len(args) < 1 {
+		flag.Usage()
+		log.Fatal("Error: Mount path is required")
+	}
+
+	if gitURL == "" {
+		flag.Usage()
+		log.Fatal("Error: Git URL is required")
+	}
+
+	mountPath := args[0]
 
 	// Clone the given repository to the given directory
-	log.Printf("git clone %s", url)
 
-	repo, err := createRepository(url)
+	// Clone the given repository to the given directory
+	log.Printf("git clone %s", gitURL)
+
+	repo, err := createRepository(gitURL)
 	if err != nil {
-		log.Fatalf("git clone %s: %s", url, err)
+		log.Fatalf("git clone %s: %s", gitURL, err)
 	}
 
 	manager := manager.NewManager(repo)
@@ -57,11 +97,11 @@ func main() {
 
 	wt, err := repo.Worktree()
 	if err != nil {
-		log.Fatalf("git worktree %s: %s", url, err)
+		log.Fatalf("git worktree %s: %s", gitURL, err)
 	}
 
-	fs := gittyfuse.NewFilesystem(wt.Filesystem, manager)
-	go fs.Mount("/home/tryy3/Codes/Go/gittyfs/test-mnt")
+	fs := gittyfuse.NewFilesystem(wt.Filesystem, manager, UID, GID)
+	go fs.Mount(mountPath)
 	defer fs.Unmount()
 
 	select {}

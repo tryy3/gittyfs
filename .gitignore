@@ -1,4 +1,5 @@
 test-mnt/
 tmp/
 test-project/
+dist/# Added by goreleaser init:
 dist/

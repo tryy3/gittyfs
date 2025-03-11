@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"github.com/go-git/go-billy/v5"
@@ -35,6 +36,8 @@ type Filesystem struct {
 	wt          billy.Filesystem
 	manager     *manager.Manager
 	mountServer *fuse.Server
+	UID         string
+	GID         string
 }
 
 func traverseTree(ctx context.Context, node *fs.Inode, wt billy.Filesystem, path string, manager *manager.Manager) {
@@ -85,8 +88,25 @@ func (self *Filesystem) OnAdd(ctx context.Context) {
 
 func (self *Filesystem) Mount(path string) {
 	// Get current user's UID and GID
-	uid := os.Getuid()
-	gid := os.Getgid()
+	var err error
+	var uid int
+	var gid int
+	if self.UID != "" {
+		uid, err = strconv.Atoi(self.UID)
+		if err != nil {
+			log.Fatalf("invalid uid: %s", self.UID)
+		}
+	} else {
+		uid = os.Getuid()
+	}
+	if self.GID != "" {
+		gid, err = strconv.Atoi(self.GID)
+		if err != nil {
+			log.Fatalf("invalid gid: %s", self.GID)
+		}
+	} else {
+		gid = os.Getgid()
+	}
 
 	server, err := fs.Mount(path, self, &fs.Options{
 		// Set proper ownership
@@ -103,9 +123,11 @@ func (self *Filesystem) Mount(path string) {
 			// FsName: "gittyfs",
 		},
 	})
+
 	self.mountServer = server
 	log.Printf("Mounted on %s", path)
 	log.Printf("Unmount by calling 'fusermount -u %s'", path)
+
 	if err != nil {
 		log.Panic(err)
 	}
@@ -115,12 +137,14 @@ func (self *Filesystem) Unmount() {
 	self.mountServer.Unmount()
 }
 
-func NewFilesystem(wt billy.Filesystem, manager *manager.Manager) *Filesystem {
+func NewFilesystem(wt billy.Filesystem, manager *manager.Manager, UID, GID string) *Filesystem {
 	dir := NewGittyDir("", wt, manager)
 
 	return &Filesystem{
 		GittyDir: dir,
 		wt:       wt,
 		manager:  manager,
+		UID:      UID,
+		GID:      GID,
 	}
 }

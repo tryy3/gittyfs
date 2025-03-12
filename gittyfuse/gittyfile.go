@@ -181,7 +181,7 @@ func (f *GittyFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.Att
 	// Fall back to in-memory state if file doesn't exist yet in filesystem
 	// (this could happen with newly created files before they're synced)
 	out.Size = uint64(len(f.content))
-	out.Mode = 0666 // Default mode for files
+	out.Mode = 0700 // Default mode for files
 
 	// Use current time as fallback
 	t := time.Now()
@@ -226,6 +226,9 @@ func (f *GittyFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetA
 	if valid&fuse.FATTR_MODE != 0 {
 		// Billy doesn't support chmod directly, but we log it
 		log.Printf("Mode change requested to %o for %s", in.Mode, f.path)
+		// out.Mode = in.Mode
+		// f.dirty = true
+		// f.wt.Chmod(f.path, os.FileMode(in.Mode))
 	}
 
 	// Handle ownership changes
@@ -242,7 +245,7 @@ func (f *GittyFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetA
 
 	// Fill out the output attributes
 	out.Size = uint64(len(f.content))
-	out.Mode = 0666 // Use the mode you want for files
+	out.Mode = 0700 // Use the mode you want for files
 
 	// Set times
 	t := time.Now()

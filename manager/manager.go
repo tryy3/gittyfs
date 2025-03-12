@@ -67,7 +67,7 @@ func (m *Manager) SyncToGit() error {
 		return nil // Nothing to do
 	}
 
-	fmt.Printf("Syncing changes to git...\n")
+	log.Printf("Syncing changes to git...\n")
 
 	// Get the worktree
 	wt, err := m.repository.Worktree()
@@ -109,12 +109,13 @@ func (m *Manager) SyncToGit() error {
 
 	// Reset dirty flag
 	m.isDirty = false
-	fmt.Printf("Changes committed to git\n")
+	log.Printf("Changes committed to git\n")
 
 	return nil
 }
 
 func (m *Manager) Run() {
+	log.Printf("Manager running\n")
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -125,17 +126,18 @@ func (m *Manager) Run() {
 			m.mu.Lock()
 			m.isDirty = true
 			m.lastChangeTime = change.Time
-			fmt.Printf("Change detected: %s (%s)\n", change.Path, change.Operation)
+			log.Printf("Change detected: %s (%s)\n", change.Path, change.Operation)
 			m.mu.Unlock()
 
 		case <-ticker.C:
 			// Check if it's time to sync
 			m.mu.Lock()
+			log.Printf("Checking if its time to sync, dirty: %v, time since last change: %v, sync interval: %v", m.isDirty, time.Since(m.lastChangeTime), m.syncInterval)
 			if m.isDirty && time.Since(m.lastChangeTime) >= m.syncInterval {
 				// Unlock before syncing as SyncToGit will acquire the lock
 				m.mu.Unlock()
 				if err := m.SyncToGit(); err != nil {
-					fmt.Printf("Error syncing to git: %v\n", err)
+					log.Printf("Error syncing to git: %v\n", err)
 				}
 			} else {
 				m.mu.Unlock()

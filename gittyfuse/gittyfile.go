@@ -31,6 +31,7 @@ var _ = (fs.NodeWriter)((*GittyFile)(nil))
 var _ = (fs.NodeFsyncer)((*GittyFile)(nil))
 var _ = (fs.NodeGetattrer)((*GittyFile)(nil))
 var _ = (fs.NodeSetattrer)((*GittyFile)(nil))
+var _ = (fs.NodeUnlinker)((*GittyFile)(nil))
 
 func NewGittyFile(path string, wt billy.Filesystem, manager *manager.Manager) *GittyFile {
 	return &GittyFile{
@@ -48,6 +49,37 @@ func NewGittyFileWithContent(path string, wt billy.Filesystem, manager *manager.
 		wt:      wt,
 		manager: manager,
 	}
+}
+
+// Unlink handles file deletion
+func (f *GittyFile) Unlink(ctx context.Context, name string) syscall.Errno {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Log the unlink operation
+	log.Printf("Unlink called on file: %s with name: %s", f.path, name)
+
+	// Since this is called on the file itself rather than the directory,
+	// we typically just need to perform cleanup
+
+	// For regular files, name should be empty or match the base name
+	if name != "" {
+		// This shouldn't happen for a file, but log it if it does
+		log.Printf("Warning: Unlink on file %s with non-empty name %s", f.path, name)
+	}
+
+	// If the file is dirty, we may want to clear its content
+	if f.dirty {
+		f.content = nil
+		f.dirty = false
+	}
+
+	// Notify the manager about the deletion if needed
+	if f.manager != nil {
+		f.manager.NotifyChange(f.path, "delete")
+	}
+
+	return 0
 }
 
 // Open handles file opening

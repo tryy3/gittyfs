@@ -114,7 +114,8 @@ func (self *Filesystem) Mount(path string) {
 		GID: uint32(gid),
 
 		MountOptions: fuse.MountOptions{
-			Debug: true,
+			AllowOther: true,
+			Debug:      true,
 		},
 	})
 

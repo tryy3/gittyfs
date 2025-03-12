@@ -69,6 +69,24 @@ func (m *Manager) SyncToGit() error {
 
 	log.Printf("Syncing changes to git...\n")
 
+	conf, err := m.repository.Config()
+	if err != nil {
+		return fmt.Errorf("failed to get repository config: %w", err)
+	}
+
+	log.Printf("Repository config: %+v\n", conf)
+
+	conf.Author.Name = "gittyfs"
+	conf.Author.Email = "gittyfs@example.com"
+
+	conf.Committer.Name = "gittyfs"
+	conf.Committer.Email = "gittyfs@example.com"
+
+	err = m.repository.SetConfig(conf)
+	if err != nil {
+		return fmt.Errorf("failed to set repository config: %w", err)
+	}
+
 	// Get the worktree
 	wt, err := m.repository.Worktree()
 	if err != nil {

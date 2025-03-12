@@ -3,6 +3,7 @@ package manager
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -154,7 +155,12 @@ func (m *Manager) Run() {
 				// Unlock before syncing as SyncToGit will acquire the lock
 				m.mu.Unlock()
 				if err := m.SyncToGit(); err != nil {
-					log.Printf("Error syncing to git: %v\n", err)
+					if strings.Contains(err.Error(), "clean working tree") {
+						log.Printf("Something went wrong earlier, skipping sync")
+						m.isDirty = false
+					} else {
+						log.Printf("Error syncing to git: %v\n", err)
+					}
 				}
 			} else {
 				m.mu.Unlock()

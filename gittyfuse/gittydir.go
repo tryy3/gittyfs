@@ -283,32 +283,32 @@ func (d *GittyDir) Rename(ctx context.Context, oldName string, newParent fs.Inod
 
 	// Old path, new path
 	oldPath := filepath.Join(d.path, oldName)
-	fmt.Printf("%#v\n", oldPath)
+	log.Printf("%#v\n", oldPath)
 
 	var newParentPath string
 	var newPath string
 
 	if dir, ok := newParent.(*GittyDir); ok {
-		fmt.Printf("%#v\n", dir)
-		fmt.Println("Directory")
+		log.Printf("%#v\n", dir)
+		log.Println("Directory")
 		newParentPath = dir.path
 		newPath = filepath.Join(newParentPath, newName)
 	} else if file, ok := newParent.(*GittyFile); ok {
-		fmt.Printf("%#v\n", file)
-		fmt.Println("File")
+		log.Printf("%#v\n", file)
+		log.Println("File")
 	} else {
-		fmt.Println("Unknown")
+		log.Println("Unknown")
 		return syscall.EIO
 	}
 
-	fmt.Printf("%#v\n", newParentPath)
+	log.Printf("%#v\n", newParentPath)
 	err := d.wt.Rename(oldPath, newPath)
 	if err != nil {
 		log.Printf("Error renaming directory %s: %v", oldPath, err)
 		return syscall.EIO
 	}
 
-	fmt.Printf("%#v\n", newPath)
+	log.Printf("%#v\n", newPath)
 	// Retrieve current file
 	oldFile := d.findFile(oldPath)
 

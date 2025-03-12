@@ -27,6 +27,7 @@ var _ = (fs.NodeCreater)((*GittyDir)(nil))
 var _ = (fs.NodeSetattrer)((*GittyDir)(nil))
 var _ = (fs.NodeUnlinker)((*GittyDir)(nil))
 var _ = (fs.NodeGetattrer)((*GittyDir)(nil))
+var _ = (fs.NodeRenamer)((*GittyDir)(nil))
 
 func NewGittyDir(path string, wt billy.Filesystem, manager *manager.Manager) *GittyDir {
 	return &GittyDir{
@@ -236,6 +237,105 @@ func (d *GittyDir) Rmdir(ctx context.Context, name string) syscall.Errno {
 	// Notify manager about the deletion
 	if d.manager != nil {
 		d.manager.NotifyChange(path, "rmdir")
+	}
+
+	return 0
+}
+
+// Rename implements the NodeRenamer interface for GittyDir
+func (d *GittyDir) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	log.Printf("Rename directory entry: %s -> %s", name, newName)
+
+	// Get the old path
+	oldPath := filepath.Join(d.path, name)
+
+	// Get the new parent directory
+	newParentDir, ok := newParent.(*GittyDir)
+	if !ok {
+		log.Printf("Error: New parent is not a GittyDir")
+		return syscall.EINVAL
+	}
+
+	// Construct the new path
+	newPath := filepath.Join(newParentDir.path, newName)
+
+	// Log the full paths
+	log.Printf("Rename full path: %s -> %s", oldPath, newPath)
+
+	// Check if the source exists
+	srcInfo, err := d.wt.Stat(oldPath)
+	if err != nil {
+		log.Printf("Error: Source %s does not exist: %v", oldPath, err)
+		return syscall.ENOENT
+	}
+
+	// Check if the destination already exists
+	destInfo, err := d.wt.Stat(newPath)
+	if err == nil {
+		// Destination exists
+		if destInfo.IsDir() && srcInfo.IsDir() {
+			// POSIX rename semantics: if both are directories, the destination must be empty
+			entries, err := d.wt.ReadDir(newPath)
+			if err != nil {
+				log.Printf("Error reading destination directory %s: %v", newPath, err)
+				return syscall.EIO
+			}
+
+			if len(entries) > 0 {
+				log.Printf("Cannot rename to %s: directory not empty", newPath)
+				return syscall.ENOTEMPTY
+			}
+
+			// Remove the empty destination directory
+			err = d.wt.Remove(newPath)
+			if err != nil {
+				log.Printf("Error removing destination directory %s: %v", newPath, err)
+				return syscall.EIO
+			}
+		} else if destInfo.IsDir() != srcInfo.IsDir() {
+			// One is a directory, the other is not - POSIX doesn't allow this
+			if destInfo.IsDir() {
+				log.Printf("Cannot rename: destination %s is a directory but source is not", newPath)
+				return syscall.EISDIR
+			} else {
+				log.Printf("Cannot rename: source %s is a directory but destination is not", oldPath)
+				return syscall.ENOTDIR
+			}
+		} else {
+			// Both are regular files, remove the destination
+			err = d.wt.Remove(newPath)
+			if err != nil {
+				log.Printf("Error removing existing destination %s: %v", newPath, err)
+				return syscall.EIO
+			}
+		}
+	}
+
+	// Perform the rename operation in the underlying filesystem
+	err = d.wt.Rename(oldPath, newPath)
+	if err != nil {
+		log.Printf("Error renaming %s to %s: %v", oldPath, newPath, err)
+		return syscall.EIO
+	}
+
+	// If the renamed item is a child of this directory, update the inode pointers
+	child := d.GetChild(name)
+	if child != nil {
+		d.RmChild(name)
+		newParentDir.AddChild(newName, child, true)
+
+		// If it's a directory, update its path
+		if gittyDir, ok := child.Operations().(*GittyDir); ok {
+			gittyDir.path = newPath
+		} else if gittyFile, ok := child.Operations().(*GittyFile); ok {
+			gittyFile.path = newPath
+		}
+	}
+
+	// Notify the manager about the rename
+	if d.manager != nil {
+		d.manager.NotifyChange(oldPath, "rename")
+		d.manager.NotifyChange(newPath, "create")
 	}
 
 	return 0

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ var _ = (fs.NodeFsyncer)((*GittyFile)(nil))
 var _ = (fs.NodeGetattrer)((*GittyFile)(nil))
 var _ = (fs.NodeSetattrer)((*GittyFile)(nil))
 var _ = (fs.NodeUnlinker)((*GittyFile)(nil))
+var _ = (fs.NodeRenamer)((*GittyFile)(nil))
 
 func NewGittyFile(path string, wt billy.Filesystem, manager *manager.Manager) *GittyFile {
 	return &GittyFile{
@@ -265,6 +267,51 @@ func (f *GittyFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetA
 	} else {
 		out.Mtime = uint64(t.Unix())
 		out.Mtimensec = uint32(t.Nanosecond())
+	}
+
+	return 0
+}
+
+// Rename implements the NodeRenamer interface for GittyFile
+func (f *GittyFile) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	log.Printf("Rename: %s -> %s", f.path, newName)
+
+	// Get the new parent directory
+	newParentDir, ok := newParent.(*GittyDir)
+	if !ok {
+		log.Printf("Error: New parent is not a GittyDir")
+		return syscall.EINVAL
+	}
+
+	// Get the old path and construct the new path
+	oldPath := f.path
+	newPath := filepath.Join(newParentDir.path, newName)
+
+	// Check if the destination already exists
+	_, err := f.wt.Stat(newPath)
+	if err == nil {
+		// Destination exists, remove it first (POSIX Rename behavior)
+		err = f.wt.Remove(newPath)
+		if err != nil {
+			log.Printf("Error removing existing destination %s: %v", newPath, err)
+			return syscall.EIO
+		}
+	}
+
+	// Perform the rename operation in the underlying filesystem
+	err = f.wt.Rename(oldPath, newPath)
+	if err != nil {
+		log.Printf("Error renaming %s to %s: %v", oldPath, newPath, err)
+		return syscall.EIO
+	}
+
+	// Update the path in the GittyFile struct
+	f.path = newPath
+
+	// Notify the manager about the rename
+	if f.manager != nil {
+		f.manager.NotifyChange(oldPath, "rename")
+		f.manager.NotifyChange(newPath, "create")
 	}
 
 	return 0

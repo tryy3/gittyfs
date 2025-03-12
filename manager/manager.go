@@ -150,7 +150,6 @@ func (m *Manager) Run() {
 		case <-ticker.C:
 			// Check if it's time to sync
 			m.mu.Lock()
-			log.Printf("Checking if its time to sync, dirty: %v, time since last change: %v, sync interval: %v", m.isDirty, time.Since(m.lastChangeTime), m.syncInterval)
 			if m.isDirty && time.Since(m.lastChangeTime) >= m.syncInterval {
 				// Unlock before syncing as SyncToGit will acquire the lock
 				m.mu.Unlock()

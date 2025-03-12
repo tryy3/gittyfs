@@ -2,9 +2,11 @@ package gittyfuse
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ var _ = (fs.NodeSetattrer)((*GittyDir)(nil))
 var _ = (fs.NodeUnlinker)((*GittyDir)(nil))
 var _ = (fs.NodeGetattrer)((*GittyDir)(nil))
 var _ = (fs.NodeRenamer)((*GittyDir)(nil))
+var _ = (fs.NodeMkdirer)((*GittyDir)(nil))
 
 func NewGittyDir(path string, wt billy.Filesystem, manager *manager.Manager) *GittyDir {
 	return &GittyDir{
@@ -242,101 +245,134 @@ func (d *GittyDir) Rmdir(ctx context.Context, name string) syscall.Errno {
 	return 0
 }
 
-// Rename implements the NodeRenamer interface for GittyDir
-func (d *GittyDir) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
-	log.Printf("Rename directory entry: %s -> %s", name, newName)
-
-	// Get the old path
-	oldPath := filepath.Join(d.path, name)
-
-	// Get the new parent directory
-	newParentDir, ok := newParent.(*GittyDir)
-	if !ok {
-		log.Printf("Error: New parent is not a GittyDir")
-		return syscall.EINVAL
+func (d *GittyDir) findFile(p string) *fs.Inode {
+	// First traverse up to the parent directory
+	var traverseUp func(node *fs.Inode) *fs.Inode
+	traverseUp = func(node *fs.Inode) *fs.Inode {
+		if node.IsRoot() {
+			return node
+		}
+		f, parent := node.Parent()
+		fmt.Printf("Test: %#v\n", f)
+		return traverseUp(parent)
 	}
+	parent := traverseUp(&d.Inode)
+	fmt.Printf("%#v\n", parent)
 
-	// Construct the new path
-	newPath := filepath.Join(newParentDir.path, newName)
-
-	// Log the full paths
-	log.Printf("Rename full path: %s -> %s", oldPath, newPath)
-
-	// Check if the source exists
-	srcInfo, err := d.wt.Stat(oldPath)
-	if err != nil {
-		log.Printf("Error: Source %s does not exist: %v", oldPath, err)
-		return syscall.ENOENT
-	}
-
-	// Check if the destination already exists
-	destInfo, err := d.wt.Stat(newPath)
-	if err == nil {
-		// Destination exists
-		if destInfo.IsDir() && srcInfo.IsDir() {
-			// POSIX rename semantics: if both are directories, the destination must be empty
-			entries, err := d.wt.ReadDir(newPath)
-			if err != nil {
-				log.Printf("Error reading destination directory %s: %v", newPath, err)
-				return syscall.EIO
-			}
-
-			if len(entries) > 0 {
-				log.Printf("Cannot rename to %s: directory not empty", newPath)
-				return syscall.ENOTEMPTY
-			}
-
-			// Remove the empty destination directory
-			err = d.wt.Remove(newPath)
-			if err != nil {
-				log.Printf("Error removing destination directory %s: %v", newPath, err)
-				return syscall.EIO
-			}
-		} else if destInfo.IsDir() != srcInfo.IsDir() {
-			// One is a directory, the other is not - POSIX doesn't allow this
-			if destInfo.IsDir() {
-				log.Printf("Cannot rename: destination %s is a directory but source is not", newPath)
-				return syscall.EISDIR
-			} else {
-				log.Printf("Cannot rename: source %s is a directory but destination is not", oldPath)
-				return syscall.ENOTDIR
-			}
-		} else {
-			// Both are regular files, remove the destination
-			err = d.wt.Remove(newPath)
-			if err != nil {
-				log.Printf("Error removing existing destination %s: %v", newPath, err)
-				return syscall.EIO
+	// Get filename from path
+	pathSplit := strings.Split(p, string(os.PathSeparator))
+	for _, v := range pathSplit {
+		// look in directory
+		children := parent.Children()
+		for name, child := range children {
+			fmt.Printf("Name: %#v\n", name)
+			if name == v {
+				fmt.Printf("Found: %#v\n", child)
+				parent = child
+				break
 			}
 		}
 	}
 
-	// Perform the rename operation in the underlying filesystem
-	err = d.wt.Rename(oldPath, newPath)
-	if err != nil {
-		log.Printf("Error renaming %s to %s: %v", oldPath, newPath, err)
+	return parent
+}
+
+// Rename implements the NodeRenamer interface for GittyDir
+func (d *GittyDir) Rename(ctx context.Context, oldName string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	log.Printf("Rename directory entry: %s -> %s", oldName, newName)
+
+	// Old path, new path
+	oldPath := filepath.Join(d.path, oldName)
+	fmt.Printf("%#v\n", oldPath)
+
+	var newParentPath string
+	var newPath string
+
+	if dir, ok := newParent.(*GittyDir); ok {
+		fmt.Printf("%#v\n", dir)
+		fmt.Println("Directory")
+		newParentPath = dir.path
+		newPath = filepath.Join(newParentPath, newName)
+	} else if file, ok := newParent.(*GittyFile); ok {
+		fmt.Printf("%#v\n", file)
+		fmt.Println("File")
+	} else {
+		fmt.Println("Unknown")
 		return syscall.EIO
 	}
 
-	// If the renamed item is a child of this directory, update the inode pointers
-	child := d.GetChild(name)
-	if child != nil {
-		d.RmChild(name)
-		newParentDir.AddChild(newName, child, true)
-
-		// If it's a directory, update its path
-		if gittyDir, ok := child.Operations().(*GittyDir); ok {
-			gittyDir.path = newPath
-		} else if gittyFile, ok := child.Operations().(*GittyFile); ok {
-			gittyFile.path = newPath
-		}
+	fmt.Printf("%#v\n", newParentPath)
+	err := d.wt.Rename(oldPath, newPath)
+	if err != nil {
+		log.Printf("Error renaming directory %s: %v", oldPath, err)
+		return syscall.EIO
 	}
 
-	// Notify the manager about the rename
-	if d.manager != nil {
-		d.manager.NotifyChange(oldPath, "rename")
-		d.manager.NotifyChange(newPath, "create")
+	fmt.Printf("%#v\n", newPath)
+	// Retrieve current file
+	oldFile := d.findFile(oldPath)
+
+	// Forget the old file
+	_, oldParentDir := oldFile.Parent()
+	ok, _ := oldParentDir.RmChild(oldName)
+	if !ok {
+		log.Printf("Error removing child %s", oldName)
+		return syscall.EIO
 	}
+
+	// Add the new file
+	ok = newParent.EmbeddedInode().AddChild(newName, oldFile, true)
+	if !ok {
+		log.Printf("Error adding child %s", newName)
+		return syscall.EIO
+	}
+
+	// Notify manager about deleting oldPath and creating newPath
+	d.manager.NotifyChange(oldPath, "delete")
+	d.manager.NotifyChange(newPath, "create")
 
 	return 0
+}
+
+// Mkdir implements the NodeMkdirer interface for creating directories
+func (d *GittyDir) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	path := filepath.Join(d.path, name)
+	log.Printf("Mkdir: %s with mode %o", path, mode)
+
+	// Create the directory in the underlying filesystem
+	err := d.wt.MkdirAll(path, os.FileMode(mode))
+	if err != nil {
+		log.Printf("Error creating directory %s: %v", path, err)
+		return nil, syscall.EIO
+	}
+
+	// Create a new GittyDir for the new directory
+	newDir := NewGittyDir(path, d.wt, d.manager)
+
+	// Create a persistent inode for the new directory
+	child := d.NewPersistentInode(ctx, newDir, fs.StableAttr{Mode: syscall.S_IFDIR})
+
+	// Add the new directory as a child of this directory
+	d.AddChild(name, child, true)
+
+	// Set attributes for the new directory
+	out.Mode = mode | syscall.S_IFDIR
+
+	// Set times for the new directory
+	t := time.Now()
+	out.SetTimes(&t, &t, &t)
+
+	// Default directory size is typically 4096 bytes
+	out.Size = 4096
+
+	// Set link count to 2 (. and ..)
+	out.Nlink = 2
+
+	// Notify manager about the new directory
+	if d.manager != nil {
+		d.manager.NotifyChange(path, "mkdir")
+	}
+
+	log.Printf("Successfully created directory: %s", path)
+	return child, 0
 }

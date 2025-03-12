@@ -149,7 +149,7 @@ func (f *GittyFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.Att
 	// Fall back to in-memory state if file doesn't exist yet in filesystem
 	// (this could happen with newly created files before they're synced)
 	out.Size = uint64(len(f.content))
-	out.Mode = 0644 // Default mode for files
+	out.Mode = 0666 // Default mode for files
 
 	// Use current time as fallback
 	t := time.Now()
@@ -210,7 +210,7 @@ func (f *GittyFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetA
 
 	// Fill out the output attributes
 	out.Size = uint64(len(f.content))
-	out.Mode = 0644 // Use the mode you want for files
+	out.Mode = 0666 // Use the mode you want for files
 
 	// Set times
 	t := time.Now()

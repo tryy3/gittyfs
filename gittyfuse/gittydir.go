@@ -57,7 +57,7 @@ func (d *GittyDir) Create(ctx context.Context, name string, flags uint32, mode u
 	d.AddChild(name, child, true)
 
 	// Setup entry attributes
-	out.Mode = uint32(0644)
+	out.Mode = uint32(0666)
 	t := time.Now()
 	out.SetTimes(&t, &t, &t)
 	log.Printf("Created file: %s\n", path)

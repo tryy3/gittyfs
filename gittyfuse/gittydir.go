@@ -2,7 +2,6 @@ package gittyfuse
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/go-git/go-billy/v5"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -29,6 +29,7 @@ var _ = (fs.NodeCreater)((*GittyDir)(nil))
 var _ = (fs.NodeSetattrer)((*GittyDir)(nil))
 var _ = (fs.NodeUnlinker)((*GittyDir)(nil))
 var _ = (fs.NodeGetattrer)((*GittyDir)(nil))
+var _ = (fs.NodeReaddirer)((*GittyDir)(nil))
 var _ = (fs.NodeRenamer)((*GittyDir)(nil))
 var _ = (fs.NodeMkdirer)((*GittyDir)(nil))
 
@@ -38,6 +39,14 @@ func NewGittyDir(path string, wt billy.Filesystem, manager *manager.Manager) *Gi
 		wt:      wt,
 		manager: manager,
 	}
+}
+
+// Readdir is part of the NodeReaddirer interface
+func (d *GittyDir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	r := make([]fuse.DirEntry, 0, 0)
+	log.Println("Readdir hit")
+	log.Printf("Children: %#v\n", d.Children())
+	return fs.NewListDirStream(r), 0
 }
 
 // Create creates a new file in the directory
@@ -253,11 +262,11 @@ func (d *GittyDir) findFile(p string) *fs.Inode {
 			return node
 		}
 		f, parent := node.Parent()
-		fmt.Printf("Test: %#v\n", f)
+		log.Printf("Test: %#v\n", f)
 		return traverseUp(parent)
 	}
 	parent := traverseUp(&d.Inode)
-	fmt.Printf("%#v\n", parent)
+	log.Printf("parent: %#v\n", parent)
 
 	// Get filename from path
 	pathSplit := strings.Split(p, string(os.PathSeparator))
@@ -265,9 +274,9 @@ func (d *GittyDir) findFile(p string) *fs.Inode {
 		// look in directory
 		children := parent.Children()
 		for name, child := range children {
-			fmt.Printf("Name: %#v\n", name)
+			log.Printf("Name: %#v\n", name)
 			if name == v {
-				fmt.Printf("Found: %#v\n", child)
+				log.Printf("Found: %#v\n", name)
 				parent = child
 				break
 			}
@@ -280,40 +289,65 @@ func (d *GittyDir) findFile(p string) *fs.Inode {
 // Rename implements the NodeRenamer interface for GittyDir
 func (d *GittyDir) Rename(ctx context.Context, oldName string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
 	log.Printf("Rename directory entry: %s -> %s", oldName, newName)
+	log.Printf("Self: %#v\n", spew.Sdump(d))
 
 	// Old path, new path
 	oldPath := filepath.Join(d.path, oldName)
-	log.Printf("%#v\n", oldPath)
+	log.Printf("oldPath: '%s'\n", oldPath)
 
 	var newParentPath string
 	var newPath string
 
 	if dir, ok := newParent.(*GittyDir); ok {
-		log.Printf("%#v\n", dir)
+		log.Printf("dir: %#v\n", dir)
 		log.Println("Directory")
 		newParentPath = dir.path
 		newPath = filepath.Join(newParentPath, newName)
 	} else if file, ok := newParent.(*GittyFile); ok {
-		log.Printf("%#v\n", file)
+		log.Printf("file: %#v\n", file)
 		log.Println("File")
+	} else if root, ok := newParent.(*Filesystem); ok {
+		log.Printf("root: %#v\n", root)
+		log.Println("Root")
+		newParentPath = root.path
+		newPath = filepath.Join(newParentPath, newName)
+		newParent = &root.Inode
 	} else {
 		log.Println("Unknown")
-		return syscall.EIO
+		newParentPath = ""
+		newPath = newName
 	}
+	log.Printf("newParent: %#v\n", spew.Sdump(newParent))
 
-	log.Printf("%#v\n", newParentPath)
+	log.Printf("newParentPath: %s\n", newParentPath)
 	err := d.wt.Rename(oldPath, newPath)
 	if err != nil {
 		log.Printf("Error renaming directory %s: %v", oldPath, err)
 		return syscall.EIO
 	}
 
-	log.Printf("%#v\n", newPath)
+	log.Printf("NewPath: '%s'\n", newPath)
 	// Retrieve current file
 	oldFile := d.findFile(oldPath)
+	newParentDir := d.findFile(newParentPath)
+	log.Printf("OldFile: %#v\n", spew.Sdump(oldFile))
+	log.Printf("NewFile: %#v\n", spew.Sdump(newParentDir))
 
-	// Forget the old file
+	//Forget the old file
 	_, oldParentDir := oldFile.Parent()
+	// _, newParentDir := newFile.Parent()
+	// oldParentDir.ExchangeChild(oldName, newParent.EmbeddedInode(), newName)
+	// ok := oldParentDir.MvChild(oldName, newParentDir, newName, true)
+	// if !ok {
+	// 	log.Printf("Error moving child %s", oldName)
+	// 	return syscall.EIO
+	// }
+	// child, ok := oldParentDir.Children()[newName]
+	// if !ok {
+	// 	log.Printf("Error finding child %s", newName)
+	// 	return syscall.EIO
+	// }
+	// child.Operations().(*GittyFile).path = newPath
 	ok, _ := oldParentDir.RmChild(oldName)
 	if !ok {
 		log.Printf("Error removing child %s", oldName)
@@ -321,13 +355,28 @@ func (d *GittyDir) Rename(ctx context.Context, oldName string, newParent fs.Inod
 	}
 
 	// Add the new file
-	ok = newParent.EmbeddedInode().AddChild(newName, oldFile, true)
+	var embed = oldFile.Operations().(*GittyFile)
+	// ok = newParentDir.AddChild(newName, oldFile, true)
+	// gittyFile := NewGittyFileWithContent(newPath, embed.wt, embed.manager, embed.content)
+
+	child := newParentDir.NewPersistentInode(ctx, embed, fs.StableAttr{Gen: 532425})
+	ok = newParentDir.AddChild(newName, child, true)
 	if !ok {
 		log.Printf("Error adding child %s", newName)
 		return syscall.EIO
 	}
 
+	// log.Printf("Children after: %#v\n", oldParentDir.Children())
+	// log.Printf("Parent after: %#v\n", newParent.EmbeddedInode().Children())
+
+	// log.Printf("OldParentDir: %#v\n", oldParentDir)
+	// log.Printf("NewParent: %#v\n", newParent.EmbeddedInode())
+
 	// Notify manager about deleting oldPath and creating newPath
+
+	log.Printf("OldParentDir: %s\n", spew.Sdump(oldParentDir))
+	log.Printf("NewParent: %s\n", spew.Sdump(newParentDir))
+
 	d.manager.NotifyChange(oldPath, "delete")
 	d.manager.NotifyChange(newPath, "create")
 

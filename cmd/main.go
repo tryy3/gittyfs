@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
@@ -67,11 +71,16 @@ func main() {
 	var UID string
 	var GID string
 	var authFile string
+	var profile string
+	var memProfile string
+	var err error
 
 	flag.StringVar(&gitURL, "git", "", "git url")
 	flag.StringVar(&UID, "uid", "", "uid")
 	flag.StringVar(&GID, "gid", "", "gid")
 	flag.StringVar(&authFile, "auth", "", "auth file")
+	flag.StringVar(&profile, "profile", "profile.pprof", "record cpu profile.")
+	flag.StringVar(&memProfile, "mem-profile", "mem-profile.pprof", "record memory profile.")
 	flag.Parse()
 
 	flag.Usage = func() {
@@ -113,9 +122,100 @@ func main() {
 		log.Fatalf("git worktree %s: %s", gitURL, err)
 	}
 
-	fs := gittyfuse.NewFilesystem(wt.Filesystem, manager, UID, GID)
-	go fs.Mount(mountPath)
-	defer fs.Unmount()
+	var uid uint32
+	var gid uint32
+	if UID != "" {
+		uidInt, err := strconv.ParseUint(UID, 10, 32)
+		if err != nil {
+			log.Fatalf("invalid uid: %s", UID)
+		}
+		uid = uint32(uidInt)
+	}
+	if GID != "" {
+		gidInt, err := strconv.ParseUint(GID, 10, 32)
+		if err != nil {
+			log.Fatalf("invalid gid: %s", GID)
+		}
+		gid = uint32(gidInt)
+	}
+
+	// var profFile, memProfFile *os.File
+	// if profile != "" {
+	// 	profFile, err = os.Create(profile)
+	// 	if err != nil {
+	// 		log.Fatalf("os.Create: %v", err)
+	// 	}
+	// }
+	// if memProfile != "" {
+	// 	memProfFile, err = os.Create(memProfile)
+	// 	if err != nil {
+	// 		log.Fatalf("os.Create: %v", err)
+	// 	}
+	// }
+	// runtime.GC()
+	// if profFile != nil {
+	// 	log.Printf("start cpu profile")
+	// 	pprof.StartCPUProfile(profFile)
+	// 	defer pprof.StopCPUProfile()
+	// }
+	// Start profiling with 5-second flush interval
+	profCtx, err := StartProfiling(
+		"cpu_profile.prof",
+		"mem_profile.prof",
+		5*time.Second,
+	)
+	if err != nil {
+		log.Printf("Failed to start profiling: %v", err)
+		// Continue with mount even if profiling fails
+	}
+	// Set up signal handler to ensure profiling data is saved on clean shutdown
+	setupSignalHandler(profCtx)
+
+	go gittyfuse.MountLoopback(wt.Filesystem, mountPath, gittyfuse.MountConfig{
+		UID:            uid,
+		GID:            gid,
+		FilePermission: 0644,
+		DirPermission:  0755,
+	})
+	defer gittyfuse.UnmountLoopback()
+	// fs := gittyfuse.NewFilesystem(wt.Filesystem, manager, UID, GID)
+	// go fs.Mount(mountPath)
+	// defer fs.Unmount()
+	// go func() {
+	// 	ticker := time.NewTicker(time.Millisecond * 10)
+	// 	for {
+	// 		select {
+	// 		case <-ticker.C:
+	// 			if profFile != nil {
+	// 				profFile.Sync()
+	// 			}
+	// 			if memProfFile != nil {
+	// 				pprof.WriteHeapProfile(memProfFile)
+	// 			}
+	// 		}
+	// 	}
+	// }()
+
+	// defer func() {
+	// 	if memProfFile != nil {
+	// 		pprof.WriteHeapProfile(memProfFile)
+	// 	}
+	// }()
 
 	select {}
+}
+
+// setupSignalHandler ensures profiling data is saved on clean shutdown
+func setupSignalHandler(profCtx *ProfilingContext) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		sig := <-c
+		log.Printf("Received signal %v, stopping profiling before exit", sig)
+		if profCtx != nil {
+			profCtx.StopProfiling()
+		}
+		os.Exit(1)
+	}()
 }

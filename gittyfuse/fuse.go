@@ -41,7 +41,8 @@ type Filesystem struct {
 }
 
 func traverseTree(ctx context.Context, node *fs.Inode, wt billy.Filesystem, path string, manager *manager.Manager) {
-	fmt.Printf("Traversing tree at: %s\n", path)
+	log.Printf("Traversing tree at: %s\n", path)
+	log.Printf("Node: %#v\n", node)
 	files, err := wt.ReadDir(path)
 	if err != nil {
 		log.Fatalf("read dir: %s", err)
@@ -52,14 +53,14 @@ func traverseTree(ctx context.Context, node *fs.Inode, wt billy.Filesystem, path
 			filePath := filepath.Join(path, file.Name())
 			// Create a GittyDir for directories
 			dir := NewGittyDir(filePath, wt, manager)
-			fmt.Printf("Adding dir: %s\n", file.Name())
+			log.Printf("Adding dir: %s\n", file.Name())
 
 			dirNode := node.NewPersistentInode(ctx, dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 			node.AddChild(file.Name(), dirNode, true)
 			traverseTree(ctx, dirNode, wt, filepath.Join(path, file.Name()), manager)
 		} else {
 			filePath := filepath.Join(path, file.Name())
-			fmt.Printf("Adding file: %s\n", filePath)
+			log.Printf("Adding file: %s\n", filePath)
 			gitFile, err := wt.OpenFile(filePath, os.O_RDONLY, 0)
 			if err != nil {
 				log.Fatalf("open file: %s", err)
